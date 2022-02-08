@@ -1,0 +1,601 @@
+USE [master]
+GO
+/****** Object:  StoredProcedure [dbo].[emds_ext_1]    Script Date: 7/19/2019 8:22:57 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- 
+-- Create date: <01/16/18>
+-- Description:	<Description,,>
+-- =============================================
+ALTER PROCEDURE [dbo].[persivia_ext_1]
+
+@Start_Date CHAR(10),
+@End_Date CHAR(10)
+
+
+AS 
+
+BEGIN
+
+
+
+
+SET @Start_Date = '09/08/2019';
+SET @End_Date = '09/30/2019';
+
+;
+with
+temp_mwphy as (Select *
+From OPENQUERY(MEDISOFT,'Select "Last Name","First Name","Class","Code" From MWPHY')), 
+temp_mwpat as (Select *
+From OPENQUERY(MEDISOFT,'Select "Chart Number","First Name","Middle Initial","Last Name","Social Security Number","Date of Birth","Sex","Street 1","City","State","Zip Code","Phone 1","Chart Number" From MWPAT')),
+temp_mwcas as (Select *
+From OPENQUERY(MEDISOFT,'Select "Case Number","Assigned Provider","Chart Number",
+"Last Visit Date","Insurance Carrier #1" From MWCAS')),
+temp_mwpra as (Select *
+From OPENQUERY(MEDISOFT,'Select "Practice Name","Street 1","City","State","Zip Code","Phone","Date Modified" From MWPRA')),
+temp_mwtrn as (Select ROW_NUMBER() OVER(PARTITION BY ctetrn."Case Number",ctetrn."Procedure Code" Order BY ctetrn."Entry Number") as rn,*
+From OPENQUERY(MEDISOFT,'Select "Chart Number","Date From","Case Number","Entry Number","Procedure Code",
+"Diagnosis Code 1","Diagnosis 1 Description",
+"Diagnosis Code 2","Diagnosis 2 Description",
+"Diagnosis Code 3","Diagnosis 3 Description",
+"Diagnosis Code 4","Diagnosis 4 Description" From MWTRN
+Where "Date From" > ''01/01/2019''') ctetrn
+Where dbo.NumericOnly1(ctetrn."Procedure Code") = ctetrn."Procedure Code"), 
+temp_mwccd as (Select *
+From OPENQUERY(MEDISOFT,'Select * From MWCCD'))
+
+
+SELECT 
+(
+Select
+'Document|'+'2.16.840.1.113883.3.72|'+((CONVERT(varchar(8),CURRENT_TIMESTAMP,112)+REPLACE(CONVERT(varchar(8),CURRENT_TIMESTAMP,108),':',''))+'|'+'|Persivia') as "Document",
+
+(
+Select 
+CONCAT('Enterprise|','650294047|',RTRIM(ent."Practice Name"),'|',
+RTRIM(ent."Street 1"),'|',RTRIM(ent."City"),'|',RTRIM(ent."State"),'|',
+RTRIM(ent."Zip Code"),'|','USA','|',LTRIM(RTRIM(ent."Phone")))
+
+FROM temp_mwpra ent
+
+
+FOR XML PATH ('Enterprise'),TYPE 
+),
+
+
+
+(
+SELECT 
+CONCAT('Practice|','650294047|',RTRIM(ppprac."Practice Name"),'|',RTRIM(ppprac."Street 1"),'|',
+RTRIM(ppprac."City"),'|',RTRIM(ppprac."State"),'|',RTRIM(ppprac."Zip Code"),'|','USA','|',
+LTRIM(RTRIM(ppprac."Phone")))
+
+FROM temp_mwpra ppprac
+FOR XML PATH ('Practice'),TYPE 
+),
+
+
+(
+SELECT
+CONCAT('Provider|','1295748994 ','|',CONCAT(RTRIM(mwphy."Last Name"),' ',RTRIM(mwphy."First Name")),'|',
+CASE
+When RTRIM(mwphy."Class") = 'NPI' THEN 'PRF'
+END)
+
+From temp_mwphy mwphy
+LEFT JOIN temp_mwcas mwcas on mwcas."Assigned Provider" = mwphy."Code"
+Where mwcas."Chart Number" = mwpat."Chart Number"
+
+FOR XML PATH ('Provider'),TYPE
+),
+
+
+(
+Select 
+CONCAT('Payer|',
+'1','|',
+REPLACE(mwcas1."Last Visit Date", '-', ''),
+'|','|',
+mwcas1."Insurance Carrier #1"
+,'|',
+(
+Select RTRIM(mwins1."Type") 
+From OPENQUERY(MEDISOFT,'Select "Type","Code" From MWINS') mwins1
+Where mwcas1."Insurance Carrier #1" = mwins1."Code"
+)
+,'|',
+(
+Select RTRIM(mwins1."Name") 
+From OPENQUERY(MEDISOFT,'Select "Name","Code" From MWINS') mwins1
+Where mwcas1."Insurance Carrier #1" = mwins1."Code"
+)
+,'|','|','|','|','|','|')
+
+FROM temp_mwcas mwcas1
+
+Where mwcas1."Chart Number" = mwpat."Chart Number" 
+
+FOR XML PATH ('Payer'),TYPE
+),
+
+
+
+(
+Select
+CONCAT('Patient|',RTRIM(mwpat2."Chart Number"),'|','|',RTRIM(mwpat2."First Name"),'|',RTRIM(mwpat2."Middle Initial"),'|',RTRIM(mwpat2."Last Name"),'|',
+'|',RTRIM(mwpat2."Social Security Number"),'|',
+REPLACE(mwpat2."Date of Birth", '-', ''),
+'|','|',
+RTRIM(mwpat2."Sex"),'|','|',
+'|',
+'|','|',RTRIM(mwpat2."Street 1"),'|',RTRIM(mwpat2."City"),'|',
+RTRIM(mwpat2."State"),'|',RTRIM(mwpat2."Zip Code"),'|','USA','|',RTRIM(LTRIM(mwpat2."Phone 1")),'|','|',
+'|')
+From temp_mwpat mwpat2
+Where mwpat2."Chart Number" = mwpat."Chart Number"
+
+FOR XML PATH ('Patient'),TYPE
+),
+
+
+-- ENCOUNTER
+
+(
+SELECT 
+CONCAT('Encounter|',RTRIM(mwtrn3."Case Number"),'|',
+RTRIM(mwtrn3."Procedure Code")
+,'|','2.16.840.1.113883.6.12|','Office Visit','|',
+REPLACE(mwtrn3."Date From", '-', ''),
+'|','','|','','|','','|','','|','','|',
+'1295748994'
+,'|','|','|','|',
+'|','|','|','|','|','|','|','|','|','|','|','|')
+
+--FROM (Select mwtrn3."Case Number", mwtrn3."Date From",
+--ROW_NUMBER() OVER(PARTITION BY mwtrn3."Case Number" Order BY mwtrn3."Entry Number") as rn
+--FROM OPENQUERY(MEDISOFT,'Select * From MWTRN') mwtrn3
+--Where mwtrn3."Chart Number" = mwpat."Chart Number" and mwtrn3."Date From" >'01/01/2019'  
+--) sub
+
+From temp_mwtrn mwtrn3
+Where rn ='1' and mwtrn3."Chart Number" = mwpat."Chart Number"
+
+
+
+FOR XML PATH ('Encounter'),TYPE
+),
+
+
+
+
+
+-- DIAGNOSIS CODE 1
+
+(
+Select 
+CONCAT('Problem|',
+CASE 
+When mwtrn."Diagnosis Code 1" is NULL THEN '00000'
+--else RTRIM(mrci.Clin_List_Code1)
+else RTRIM(mwtrn."Diagnosis Code 1")
+END
+,'|','2.16.840.1.113883.6.90|',
+RTRIM(dbo.NoUnicode(mwtrn."Diagnosis 1 Description")),'|',REPLACE(mwtrn."Date From", '-', ''),'|',
+'|','|',
+
+'|','|')
+
+From temp_mwtrn mwtrn 
+Where mwpat."Chart Number" = mwtrn."Chart Number" and 
+(mwtrn."Diagnosis 1 Description" is not null or mwtrn."Diagnosis 1 Description" <> '')
+
+FOR XML PATH ('Problem'),TYPE
+),
+
+
+(
+Select 
+CONCAT('Problem|',
+CASE 
+When mwtrn."Diagnosis Code 2" is NULL THEN '00000'
+--else RTRIM(mrci.Clin_List_Code1)
+else RTRIM(mwtrn."Diagnosis Code 2")
+END
+,'|','2.16.840.1.113883.6.90|',
+RTRIM(dbo.NoUnicode(mwtrn."Diagnosis 2 Description")),'|',REPLACE(mwtrn."Date From", '-', ''),'|',
+'|','|',
+
+'|','|')
+
+From temp_mwtrn mwtrn 
+Where mwpat."Chart Number" = mwtrn."Chart Number" and 
+(mwtrn."Diagnosis 2 Description" is not null or mwtrn."Diagnosis 2 Description" <> '')
+
+FOR XML PATH ('Problem'),TYPE
+),
+
+(
+Select 
+CONCAT('Problem|',
+CASE 
+When mwtrn."Diagnosis Code 3" is NULL THEN '00000'
+--else RTRIM(mrci.Clin_List_Code1)
+else RTRIM(mwtrn."Diagnosis Code 3")
+END
+,'|','2.16.840.1.113883.6.90|',
+RTRIM(dbo.NoUnicode(mwtrn."Diagnosis 3 Description")),'|',REPLACE(mwtrn."Date From", '-', ''),'|',
+'|','|',
+
+'|','|')
+
+From temp_mwtrn mwtrn 
+Where mwpat."Chart Number" = mwtrn."Chart Number" and 
+(mwtrn."Diagnosis 3 Description" is not null or mwtrn."Diagnosis 3 Description" <> '')
+
+FOR XML PATH ('Problem'),TYPE
+),
+
+(
+Select 
+CONCAT('Problem|',
+CASE 
+When mwtrn."Diagnosis Code 4" is NULL THEN '00000'
+--else RTRIM(mrci.Clin_List_Code1)
+else RTRIM(mwtrn."Diagnosis Code 4")
+END
+,'|','2.16.840.1.113883.6.90|',
+RTRIM(dbo.NoUnicode(mwtrn."Diagnosis 4 Description")),'|',REPLACE(mwtrn."Date From", '-', ''),'|',
+'|','|',
+
+'|','|')
+
+From temp_mwtrn mwtrn 
+Where mwpat."Chart Number" = mwtrn."Chart Number" and 
+(mwtrn."Diagnosis 4 Description" is not null or mwtrn."Diagnosis 4 Description" <> '')
+
+FOR XML PATH ('Problem'),TYPE
+),
+
+------ PROCEDURES ------
+
+(
+Select
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9902%' THEN 'G9902'
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9903%' THEN 'G9903'
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9904%' THEN 'G9904'
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9905%' THEN 'G9905'
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9906%' THEN 'G9906'
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9907%' THEN 'G9907'
+When mwccd_TobaccoScreen."TobaccoScreen" like '%G9908%' THEN 'G9908'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.285'
+,'|',
+'Tobacco Screening','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_TobaccoScreen
+Where mwccd_TobaccoScreen."Case Number" = mwccd_main."Case Number" and 
+(mwccd_TobaccoScreen."TobaccoScreen" is not null or mwccd_TobaccoScreen."TobaccoScreen" <> '')
+
+FOR XML PATH ('Procedure'),TYPE
+),
+
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_intervention."TobaccoIntervention" like '%G9908%' THEN 'G9908'
+When mwccd_intervention."TobaccoIntervention" like '%G9906%' THEN 'G9906'
+When mwccd_intervention."TobaccoIntervention" like '%G9909%' THEN 'G9909'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.285'
+,'|',
+'TobaccoIntervention','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_intervention
+Where mwccd_intervention."Case Number" = mwccd_main."Case Number" and 
+(mwccd_intervention."TobaccoIntervention" is not null or mwccd_intervention."TobaccoIntervention" <> '')
+
+FOR XML PATH ('Procedure'),TYPE
+),
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_intervention."TobaccoIntervention" like '%4004F-8P%' THEN '4004F-8P'
+When mwccd_intervention."TobaccoIntervention" like '%4004F%' THEN '4004F'
+When mwccd_intervention."TobaccoIntervention" like '%4004F-1P%' THEN '4004F-1P'
+When mwccd_intervention."TobaccoIntervention" like '%1036F%' THEN '1036F'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.12'
+,'|',
+'TobaccoIntervention','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+
+
+From  temp_mwccd mwccd_intervention
+Where mwccd_intervention."Case Number" = mwccd_main."Case Number" and 
+(mwccd_intervention."TobaccoIntervention" is not null or mwccd_intervention."TobaccoIntervention" <> '')
+
+
+FOR XML PATH ('Procedure'),TYPE
+),
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_FallsRisk."FallsRisk" like '%3288F-8P%' THEN '3288F-8P'
+--When mwccd_FallsRisk."FallsRisk" like '%1100F%' THEN '1100F'
+When mwccd_FallsRisk."FallsRisk" like '%3288F-1P%' THEN '3288F-1P'
+When mwccd_FallsRisk."FallsRisk" like '%3288F%' THEN '3288F'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.12'
+,'|',
+'FallsRisk','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+
+From  temp_mwccd mwccd_FallsRisk
+
+Where mwccd_FallsRisk."Case Number" = mwccd_main."Case Number" and 
+(mwccd_FallsRisk."FallsRisk" is not null or mwccd_FallsRisk."FallsRisk" <> '')
+
+
+FOR XML PATH ('Procedure'),TYPE
+),
+
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_FutureFallsRisk."FutureFallsRisk" like '%1100F%' THEN '1100F'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.12'
+,'|',
+'FutureFallsRisk','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_FutureFallsRisk
+
+Where mwccd_FutureFallsRisk."Case Number" = mwccd_main."Case Number" and 
+(mwccd_FutureFallsRisk."FutureFallsRisk" is not null or mwccd_FutureFallsRisk."FutureFallsRisk" <> '')
+
+FOR XML PATH ('Procedure'),TYPE
+),
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_FallsPlanCare."FallsPlanCare" like '%0518F%' THEN '0518F'
+When mwccd_FallsPlanCare."FallsPlanCare" like '%0518F-8P%' THEN '0518F-8P'
+When mwccd_FallsPlanCare."FallsPlanCare" like '%0518F-1P%' THEN '0518F-1P'
+When mwccd_FallsPlanCare."FallsPlanCare" like '%1100F%' THEN '1100F'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.12'
+,'|',
+'FallsPlanCare','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_FallsPlanCare
+Where mwccd_FallsPlanCare."Case Number" = mwccd_main."Case Number" and 
+(mwccd_FallsPlanCare."FallsPlanCare" is not null or mwccd_FallsPlanCare."FallsPlanCare" <> '')
+FOR XML PATH ('Procedure'),TYPE
+),
+
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_DocCurrentMeds."DocCurrentMeds" like '%G8427%' THEN 'G8427'
+When mwccd_DocCurrentMeds."DocCurrentMeds" like '%G8430%' THEN 'G8430'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.285'
+,'|',
+'DocCurrentMeds','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_DocCurrentMeds
+Where mwccd_DocCurrentMeds."Case Number" = mwccd_main."Case Number" and 
+(mwccd_DocCurrentMeds."DocCurrentMeds" is not null or mwccd_DocCurrentMeds."DocCurrentMeds" <> '')
+FOR XML PATH ('Procedure'),TYPE
+),
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_Osteoarthritis."Osteoarthritis" like '%1006F-8P%' THEN '1006F-8P'
+When mwccd_Osteoarthritis."Osteoarthritis" like '%1006F%' THEN '1006F'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.12'
+,'|',
+'Osteoarthritis','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_Osteoarthritis
+Where mwccd_Osteoarthritis."Case Number" = mwccd_main."Case Number" and 
+(mwccd_Osteoarthritis."Osteoarthritis" is not null or mwccd_Osteoarthritis."Osteoarthritis" <> '')
+FOR XML PATH ('Procedure'),TYPE
+),
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_Pain."PainAssessmenr" like '%G8731%' THEN 'G8731'
+When mwccd_Pain."PainAssessmenr" like '%G8730%' THEN 'G8730'
+When mwccd_Pain."PainAssessmenr" like '%G8509%' THEN 'G8509'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.285'
+,'|',
+'PainAssessmenr','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_Pain
+Where mwccd_Pain."Case Number" = mwccd_main."Case Number" and 
+(mwccd_Pain."PainAssessmenr" is not null or mwccd_Pain."PainAssessmenr" <> '')
+FOR XML PATH ('Procedure'),TYPE
+),
+
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_OneHighRisk."OneHighRisk" like '%G9366%' THEN 'G9366'
+When mwccd_OneHighRisk."OneHighRisk" like '%G9365%' THEN 'G9365'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.285'
+,'|',
+'OneHighRisk','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_OneHighRisk
+Where mwccd_OneHighRisk."Case Number" = mwccd_main."Case Number" and 
+(mwccd_OneHighRisk."OneHighRisk" is not null or mwccd_OneHighRisk."OneHighRisk" <> '')
+FOR XML PATH ('Procedure'),TYPE
+),
+
+
+(
+Select DISTINCT
+CONCAT('Procedure|',
+CASE
+When mwccd_TwoHighRisk."TwoHighRisk" like '%G9368%' THEN 'G9368'
+When mwccd_TwoHighRisk."TwoHighRisk" like '%G9367%' THEN 'G9367'
+ELSE '00000'
+END
+,
+'|',
+'2.16.840.1.113883.6.285'
+,'|',
+'OneHighRisk','|',
+REPLACE(mwtrn."Date From", '-', '')
+,'|','|','|','|',
+'1295748994'
+,'|','|', 
+'|','|','|','|','|','|','|','|','|','|','|','|','|','|','|')
+
+From  temp_mwccd mwccd_TwoHighRisk
+Where mwccd_TwoHighRisk."Case Number" = mwccd_main."Case Number" and 
+(mwccd_TwoHighRisk."TwoHighRisk" is not null or mwccd_TwoHighRisk."TwoHighRisk" <> '')
+FOR XML PATH ('Procedure'),TYPE
+)
+
+From temp_mwccd mwccd_main
+LEFT JOIN temp_mwtrn mwtrn on  mwccd_main."Case Number" = mwtrn."Case Number"
+
+
+Where mwpat."Chart Number" = mwtrn."Chart Number" and rn = '1'
+--Where mwpat."Chart Number" = mwtrn."Chart Number" 
+--and mwtrn."Entry Number" = 
+--(Select top 1 mwtrn1."Entry Number"
+--From temp_mwtrn mwtrn1 
+--Where mwtrn."Case Number" = mwccd_main."Case Number")
+
+
+FOR XML PATH (''),TYPE
+)
+
+
+
+
+
+From temp_mwpat mwpat
+Where mwpat."Chart Number" IN
+(Select DISTINCT mwtrn."Chart Number" From temp_mwtrn mwtrn 
+Where mwtrn."Date From" >= @Start_Date and mwtrn."Date From" < @End_Date)
+
+FOR XML PATH('TEST'),ELEMENTS,TYPE
+)
+
+FOR XML PATH('TESTS')
+END
+
